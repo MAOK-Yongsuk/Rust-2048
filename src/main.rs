@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use itertools::Itertools;
 use rand::prelude::*;
+use std::{cmp::Ordering, convert::TryFrom};
+
 mod colors;
 
 fn main() {
@@ -15,6 +17,7 @@ fn main() {
             }),
             ..default()
         }))
+        .init_resource::<FontSpec>()
         .add_startup_systems(
             (
                 setup,
@@ -24,6 +27,8 @@ fn main() {
             )
                 .chain(),
         )
+        .add_system(render_tile_points)
+        .add_systems((render_tile_points, board_shift))
         .run()
 }
 
@@ -40,15 +45,35 @@ struct Board {
     physical_size: f32,
 }
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 struct Points {
     value: u32,
 }
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 struct Position {
     x: u8,
     y: u8,
+}
+
+#[derive(Component)]
+struct TileText;
+
+#[derive(Resource)]
+struct FontSpec {
+    family: Handle<Font>,
+}
+
+impl FromWorld for FontSpec {
+    fn from_world(world: &mut World) -> Self {
+        let asset_server = world
+            .get_resource_mut::<AssetServer>()
+            .unwrap();
+        FontSpec {
+            family: asset_server
+                .load("fonts/FiraSans-Bold.ttf"),
+        }
+    }
 }
 
 impl Board {
@@ -112,6 +137,7 @@ fn spawn_board(mut commands: Commands) {
 fn spawn_tiles(
     mut commands: Commands,
     query_board: Query<&Board>,
+    font_spec: Res<FontSpec>,
 ) {
     let board = query_board.single();
 
@@ -138,7 +164,103 @@ fn spawn_tiles(
                 ),
                 ..default()
             })
+            .with_children(|child_builder| {
+                child_builder
+                    .spawn(Text2dBundle {
+                        text: Text::from_section(
+                            "4",
+                            TextStyle {
+                                font: font_spec
+                                    .family
+                                    .clone(),
+                                font_size: 40.0,
+                                color: Color::BLACK,
+                            },
+                        )
+                        .with_alignment(
+                            TextAlignment::Center,
+                        ),
+                        transform: Transform::from_xyz(
+                            0.0, 0.0, 1.0,
+                        ),
+                        ..default()
+                    })
+                    .insert(TileText);
+            })
             .insert(Points { value: 2 })
             .insert(pos);
+    }
+}
+
+fn render_tile_points(
+    mut texts: Query<&mut Text, With<TileText>>,
+    tiles: Query<(&Points, &Children)>,
+) {
+    for (points, children) in tiles.iter() {
+        if let Some(entity) = children.first() {
+            let mut text = texts
+                .get_mut(*entity)
+                .expect("expected Text to exist");
+            let mut text_section = text.sections.first_mut().expect("expect first section to be accessible as mutable");
+            text_section.value = points.value.to_string()
+        }
+    }
+}
+
+enum BoardShift {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+impl TryFrom<&KeyCode> for BoardShift {
+    type Error = &'static str;
+
+    fn try_from(
+        value: &KeyCode,
+    ) -> Result<Self, Self::Error> {
+        match value {
+            KeyCode::Left => Ok(BoardShift::Left),
+            KeyCode::Up => Ok(BoardShift::Up),
+            KeyCode::Right => Ok(BoardShift::Right),
+            KeyCode::Down => Ok(BoardShift::Down),
+            _ => Err("not a valid board_shift key"),
+        }
+    }
+}
+
+fn board_shift(
+    input: Res<Input<KeyCode>>,
+    mut tiles: Query<(Entity, &mut Position, &mut Points)>,
+) {
+    let shift_direction =
+        input.get_just_pressed().find_map(|key_code| {
+            BoardShift::try_from(key_code).ok()
+        });
+
+    match shift_direction {
+        Some(BoardShift::Left) => {
+            dbg!("left");
+            let mut it =
+                tiles.iter_mut().sorted_by(|a, b| {
+                    match Ord::cmp(&a.1.y, &b.1.y) {
+                        Ordering::Equal => {
+                            Ord::cmp(&a.1.x, &b.1.x)
+                        }
+                        ordering => ordering,
+                    }
+                });
+        }
+        Some(BoardShift::Right) => {
+            dbg!("right");
+        }
+        Some(BoardShift::Up) => {
+            dbg!("up");
+        }
+        Some(BoardShift::Down) => {
+            dbg!("down");
+        }
+        None => (),
     }
 }
